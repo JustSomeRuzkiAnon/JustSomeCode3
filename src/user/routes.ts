@@ -32,9 +32,14 @@ userRouter.use(
     _next: express.NextFunction
   ) => {
     const data: any = { message: err.message, stack: err.stack, status: 500 };
+    const isCsrfError = err.message === "invalid csrf token";
+
+    if (isCsrfError) {
+      res.clearCookie("csrf");
+      req.session.csrf = undefined;
+    }
 
     if (req.accepts("json", "html") === "json") {
-      const isCsrfError = err.message === "invalid csrf token";
       const message = isCsrfError
         ? "CSRF token mismatch; try refreshing the page"
         : err.message;

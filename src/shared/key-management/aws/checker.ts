@@ -20,8 +20,10 @@ const KNOWN_MODEL_IDS: ModuleAliasTuple[] = [
   ["anthropic.claude-v2", "anthropic.claude-v2:1"],
   ["anthropic.claude-3-sonnet-20240229-v1:0"],
   ["anthropic.claude-3-haiku-20240307-v1:0"],
+  ["anthropic.claude-3-5-haiku-20241022-v1:0"],
   ["anthropic.claude-3-opus-20240229-v1:0"],
   ["anthropic.claude-3-5-sonnet-20240620-v1:0"],
+  ["anthropic.claude-3-5-sonnet-20241022-v2:0"],
   ["mistral.mistral-7b-instruct-v0:2"],
   ["mistral.mixtral-8x7b-instruct-v0:1"],
   ["mistral.mistral-large-2402-v1:0"],
@@ -107,6 +109,7 @@ See https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference-
     }
 
     // Perform checks for all parent model IDs
+    // TODO: use allsettled
     const results = await Promise.all(
       KNOWN_MODEL_IDS.filter(([model]) =>
         // Skip checks for models that are disabled anyway
@@ -180,9 +183,9 @@ See https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference-
           // not necessarily disabled. Retry in 10 seconds.
           this.log.warn(
             { key: key.hash, errorType, error: error.response.data },
-            "Key is rate limited. Rechecking in 10 seconds."
+            "Key is rate limited. Rechecking in 30 seconds."
           );
-          const next = Date.now() - (KEY_CHECK_PERIOD - 10 * 1000);
+          const next = Date.now() - (KEY_CHECK_PERIOD - 30 * 1000);
           return this.updateKey(key.hash, { lastChecked: next });
         case "ValidationException":
         default:
@@ -238,7 +241,7 @@ See https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference-
         } catch (e) {
           this.log.error(
             { key: key.hash, model, profile, error: e.message },
-            "Error testing model with inference profile; trying model ID directly."
+            "InvokeModel via inference profile returned an error; trying model ID directly."
           );
           result = false;
         }
@@ -248,6 +251,7 @@ See https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference-
         // profile will be used when the key is used for inference.
         if (result) return true;
       }
+      this.log.debug({ key: key.hash, model }, "Testing model via model ID.");
       return this.testClaudeModel(key, model);
     } else if (model.includes("mistral")) {
       return this.testMistralModel(key, model);
@@ -273,7 +277,7 @@ See https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference-
       method: "POST",
       url: POST_INVOKE_MODEL_URL(creds.region, model),
       data: payload,
-      validateStatus: (status) => [400, 403, 404, 503].includes(status),
+      validateStatus: (status) => [400, 403, 404, 429, 503].includes(status),
     };
     config.headers = new AxiosHeaders({
       "content-type": "application/json",
@@ -295,6 +299,27 @@ See https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference-
         "Model is accessible, but may be temporarily unavailable."
       );
       return true;
+    }
+
+    // 429 ThrottlingException can suggest the model is available but the key
+    // is being rate limited. I think if a key does not have access to the
+    // model, it cannot receive a 429 response, so this should be a success.
+    if (status === 429) {
+      if (errorType.match(/ThrottlingException/i)) {
+        this.log.debug(
+          { key: key.hash, model, errorType, data, status, headers },
+          "Model is available but key is rate limited."
+        );
+        return true;
+      } else {
+        throw new AxiosError(
+          `InvokeModel returned 429 of type ${errorType}`,
+          `AWS_INVOKE_MODEL_RATE_LIMITED`,
+          response.config,
+          response.request,
+          response
+        );
+      }
     }
 
     // This message indicates the key is valid but this particular model is not

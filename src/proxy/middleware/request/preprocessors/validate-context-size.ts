@@ -7,7 +7,7 @@ import { RequestPreprocessor } from "../index";
 const CLAUDE_MAX_CONTEXT = config.maxContextTokensAnthropic;
 const OPENAI_MAX_CONTEXT = config.maxContextTokensOpenAI;
 // todo: make configurable
-const GOOGLE_AI_MAX_CONTEXT = 1024000;
+const GOOGLE_AI_MAX_CONTEXT = 2048000;
 const MISTRAL_AI_MAX_CONTENT = 131072;
 
 /**

@@ -25,9 +25,11 @@ const getModelsResponse = () => {
   // https://docs.anthropic.com/en/docs/about-claude/models
   const variants = [
     "claude-3-haiku@20240307",
+    "claude-3-5-haiku@20241022",
     "claude-3-sonnet@20240229",
-    "claude-3-opus@20240229",
     "claude-3-5-sonnet@20240620",
+    "claude-3-5-sonnet-v2@20241022",
+    "claude-3-opus@20240229",
   ];
 
   const models = variants.map((id) => ({
@@ -149,8 +151,9 @@ function maybeReassignModel(req: Request) {
     return;
   }
 
-  const [_, _cl, instant, _v, major, _sep, minor, _ctx, name, _rev] = match;
+  const [_, _cl, instant, _v, major, _sep, minor, _ctx, name, rev] = match;
 
+  // TODO: rework this to function similarly to aws-claude.ts maybeReassignModel
   const ver = minor ? `${major}.${minor}` : major;
   switch (ver) {
     case "3":
@@ -164,8 +167,25 @@ function maybeReassignModel(req: Request) {
       }
       return;
     case "3.5":
-      req.body.model = "claude-3-5-sonnet@20240620";
-      return;
+      switch (name) {
+        case "sonnet":
+          switch (rev) {
+            case "20241022":
+            case "latest":
+              req.body.model = "claude-3-5-sonnet-v2@20241022";
+              return;
+            case "20240620":
+              req.body.model = "claude-3-5-sonnet@20240620";
+              return;
+          }
+          break;
+        case "haiku":
+          req.body.model = "claude-3-5-haiku@20241022";
+          return;
+        case "opus":
+          // Add after model ids are announced late 2024
+          break;
+      }
   }
 
   // Fallback to Claude3 Sonnet

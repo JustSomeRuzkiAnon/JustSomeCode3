@@ -548,46 +548,91 @@ async function handleGoogleAIBadRequestError(
   errorPayload: ProxiedErrorPayload
 ) {
   const error = errorPayload.error || {};
-  const { message, status, details } = error;
-
-  if (status === "INVALID_ARGUMENT") {
-    const reason = details?.[0]?.reason;
-    if (reason === "API_KEY_INVALID") {
-      req.log.warn(
-        { key: req.key?.hash, status, reason, msg: error.message },
-        "Received `API_KEY_INVALID` error from Google AI. Check the configured API key."
-      );
-      keyPool.disable(req.key!, "revoked");
-      errorPayload.proxy_note = `Assigned API key is invalid.`;
-    }
-  } else if (status === "FAILED_PRECONDITION") {
-    if (message.match(/please enable billing/i)) {
-      req.log.warn(
-        { key: req.key?.hash, status, msg: error.message },
-        "Cannot use key due to billing restrictions."
-      );
-      keyPool.disable(req.key!, "revoked");
-      errorPayload.proxy_note = `Assigned API key cannot be used.`;
-    }
+  // google changes this shit every few months
+  // i don't want to deal with it
+  const keyDeadMsgs = [
+    /please enable billing/i,
+    /API key not valid/i,
+    /API key expired/i,
+    /pass a valid API/i,
+  ];
+  const text = JSON.stringify(error);
+  if (keyDeadMsgs.some((msg) => text.match(msg))) {
+    req.log.warn(
+      { key: req.key?.hash, error: text },
+      "Google API key appears to be inoperative."
+    );
+    keyPool.disable(req.key!, "revoked");
+    errorPayload.proxy_note = `Assigned API key cannot be used.`;
   } else {
     req.log.warn(
-      { key: req.key?.hash, status, msg: error.message },
-      "Received unexpected 400 error from Google AI."
+      { key: req.key?.hash, error: text },
+      "Unknown Google API error."
     );
+    errorPayload.proxy_note = `Unrecognized error from Google AI.`;
   }
+
+  // const { message, status, details } = error;
+  //
+  // if (status === "INVALID_ARGUMENT") {
+  //   const reason = details?.[0]?.reason;
+  //   if (reason === "API_KEY_INVALID") {
+  //     req.log.warn(
+  //       { key: req.key?.hash, status, reason, msg: error.message },
+  //       "Received `API_KEY_INVALID` error from Google AI. Check the configured API key."
+  //     );
+  //     keyPool.disable(req.key!, "revoked");
+  //     errorPayload.proxy_note = `Assigned API key is invalid.`;
+  //   }
+  // } else if (status === "FAILED_PRECONDITION") {
+  //   if (message.match(/please enable billing/i)) {
+  //     req.log.warn(
+  //       { key: req.key?.hash, status, msg: error.message },
+  //       "Cannot use key due to billing restrictions."
+  //     );
+  //     keyPool.disable(req.key!, "revoked");
+  //     errorPayload.proxy_note = `Assigned API key cannot be used.`;
+  //   }
+  // } else {
+  //   req.log.warn(
+  //     { key: req.key?.hash, status, msg: error.message },
+  //     "Received unexpected 400 error from Google AI."
+  //   );
+  // }
 }
 
 //{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED"}
+//
 async function handleGoogleAIRateLimitError(
   req: Request,
   errorPayload: ProxiedErrorPayload
 ) {
   const status = errorPayload.error?.status;
+  const text = JSON.stringify(errorPayload.error);
+
+  // sometimes they block keys by rate limiting them to 0 requests per minute
+  // for some indefinite period of time
+  const keyDeadMsgs = [
+    /GenerateContentRequestsPerMinutePerProjectPerRegion/i,
+    /"quota_limit_value":"0"/i,
+  ];
+
   switch (status) {
-    case "RESOURCE_EXHAUSTED":
+    case "RESOURCE_EXHAUSTED": {
+      if (keyDeadMsgs.every((msg) => text.match(msg))) {
+        req.log.warn(
+          { key: req.key?.hash, error: text },
+          "Google API key appears to be temporarily inoperative and will be disabled."
+        );
+        keyPool.disable(req.key!, "revoked");
+        errorPayload.proxy_note = `Assigned API key cannot be used.`;
+        return;
+      }
+
       keyPool.markRateLimited(req.key!);
       await reenqueueRequest(req);
       throw new RetryableError("Rate-limited request re-enqueued.");
+    }
     default:
       errorPayload.proxy_note = `Unrecognized rate limit error from Google AI (${status}). Please report this.`;
       break;

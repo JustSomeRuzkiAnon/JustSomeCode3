@@ -264,7 +264,15 @@ export function getCompletionFromBody(req: Request, body: Record<string, any>) {
       if ("choices" in body) {
         return body.choices[0].message.content;
       }
-      return body.candidates[0].content.parts[0].text;
+      const text = body.candidates[0].content?.parts?.[0]?.text;
+      if (!text) {
+        req.log.warn(
+          { body: JSON.stringify(body) },
+          "Received empty Google AI text completion"
+        );
+        return "";
+      }
+      return text;
     case "openai-image":
       return body.data?.map((item: any) => item.url).join("\n");
     default:

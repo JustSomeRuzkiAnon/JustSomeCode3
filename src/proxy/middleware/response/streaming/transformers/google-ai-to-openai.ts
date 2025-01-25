@@ -9,7 +9,7 @@ const log = logger.child({
 
 type GoogleAIStreamEvent = {
   candidates: {
-    content: { parts: { text: string }[]; role: string };
+    content?: { parts?: { text: string }[]; role: string };
     finishReason?: "STOP" | "MAX_TOKENS" | "SAFETY" | "RECITATION" | "OTHER";
     index: number;
     tokenCount?: number;
@@ -34,8 +34,14 @@ export const googleAIToOpenAI: StreamingCompletionTransformer = (params) => {
     return { position: -1 };
   }
 
-  const parts = completionEvent.candidates[0].content.parts;
+  const parts = completionEvent.candidates[0].content?.parts || [];
   let content = parts[0]?.text ?? "";
+
+  if (isSafetyStop(completionEvent)) {
+    content = `[Proxy Warning] Gemini safety filter triggered: ${JSON.stringify(
+      completionEvent.candidates[0].safetyRatings
+    )}`;
+  }
 
   // If this is the first chunk, try stripping speaker names from the response
   // e.g. "John: Hello" -> "Hello"
@@ -59,6 +65,14 @@ export const googleAIToOpenAI: StreamingCompletionTransformer = (params) => {
 
   return { position: -1, event: newEvent };
 };
+
+function isSafetyStop(completion: GoogleAIStreamEvent) {
+  const isSafetyStop = ["SAFETY", "OTHER"].includes(
+    completion.candidates[0].finishReason ?? ""
+  );
+  const hasNoContent = completion.candidates[0].content?.parts?.length === 0;
+  return isSafetyStop && hasNoContent;
+}
 
 function asCompletion(event: ServerSentEvent): GoogleAIStreamEvent | null {
   try {

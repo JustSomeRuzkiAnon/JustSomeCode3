@@ -10,7 +10,6 @@
     "start": "node --trace-deprecation --trace-warnings build/server.js",
     "start:dev": "nodemon --watch src --exec ts-node --transpile-only src/server.ts",
     "start:debug": "ts-node --inspect --transpile-only src/server.ts",
-    "start:replit": "tsc && node build/server.js",
     "start:watch": "nodemon --require source-map-support/register build/server.js",
     "type-check": "tsc --noEmit"
   },

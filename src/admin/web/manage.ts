@@ -274,6 +274,7 @@ router.post("/maintenance", (req, res) => {
         "aws",
         "gcp",
         "azure",
+        "google-ai"
       ];
       checkable.forEach((s) => keyPool.recheck(s));
       const keyCount = keyPool

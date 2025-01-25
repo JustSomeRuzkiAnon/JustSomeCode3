@@ -36,9 +36,13 @@ const getModelsResponse = () => {
     "claude-2.0",
     "claude-2.1",
     "claude-3-haiku-20240307",
+    "claude-3-5-haiku-20241022",
     "claude-3-opus-20240229",
+    "claude-3-opus-latest",
     "claude-3-sonnet-20240229",
     "claude-3-5-sonnet-20240620",
+    "claude-3-5-sonnet-20241022",
+    "claude-3-5-sonnet-latest",
   ];
 
   const models = claudeVariants.map((id) => ({
@@ -166,12 +170,12 @@ export function transformAnthropicChatResponseToOpenAI(
 
 /**
  * If a client using the OpenAI compatibility endpoint requests an actual OpenAI
- * model, reassigns it to Claude 3 Sonnet.
+ * model, reassigns it to Sonnet.
  */
 function maybeReassignModel(req: Request) {
   const model = req.body.model;
-  if (!model.startsWith("gpt-")) return;
-  req.body.model = "claude-3-sonnet-20240229";
+  if (model.includes("claude")) return; // use whatever model the user requested
+  req.body.model = "claude-3-5-sonnet-latest";
 }
 
 /**

@@ -75,6 +75,14 @@ export class KeyPool {
     }
   }
 
+  /**
+   * Updates a key in the keypool with the given properties.
+   *
+   * Be aware that the `key` argument may not be the same object instance as the
+   * one in the keypool (such as if it is a clone received via `KeyPool.get` in
+   * which case you are responsible for updating your clone with the new
+   * properties.
+   */
   public update(key: Key, props: AllowedPartial): void {
     const service = this.getKeyProvider(key.service);
     service.update(key.hash, props);
@@ -170,8 +178,9 @@ export class KeyPool {
 
     const job = schedule.scheduleJob(crontab, () => {
       const next = job.nextInvocation();
-      logger.info({ next }, "Performing periodic recheck of OpenAI keys");
+      logger.info({ next }, "Performing periodic recheck.");
       this.recheck("openai");
+      this.recheck("google-ai");
     });
     logger.info(
       { rule: crontab, next: job.nextInvocation() },

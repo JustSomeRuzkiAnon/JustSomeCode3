@@ -7,9 +7,11 @@ import type { GoogleAIKey, GoogleAIKeyProvider } from "./provider";
 const axios = getAxiosInstance();
 
 const MIN_CHECK_INTERVAL = 3 * 1000; // 3 seconds
-const KEY_CHECK_PERIOD = 3 * 60 * 60 * 1000; // 3 hours
+const KEY_CHECK_PERIOD = 6 * 60 * 60 * 1000; // 3 hours
 const LIST_MODELS_URL =
   "https://generativelanguage.googleapis.com/v1beta/models";
+const GENERATE_CONTENT_URL =
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=%KEY%";
 
 type ListModelsResponse = {
   models: {
@@ -37,16 +39,16 @@ export class GoogleAIKeyChecker extends KeyCheckerBase<GoogleAIKey> {
       service: "google-ai",
       keyCheckPeriod: KEY_CHECK_PERIOD,
       minCheckInterval: MIN_CHECK_INTERVAL,
-      recurringChecksEnabled: false,
+      recurringChecksEnabled: true,
       updateKey,
     });
   }
 
   protected async testKeyOrFail(key: GoogleAIKey) {
     const provisionedModels = await this.getProvisionedModels(key);
-    const updates = {
-      modelFamilies: provisionedModels,
-    };
+    await this.testGenerateContent(key);
+
+    const updates = { modelFamilies: provisionedModels };
     this.updateKey(key.hash, updates);
     this.log.info(
       { key: key.hash, models: key.modelFamilies, ids: key.modelIds.length },
@@ -78,33 +80,44 @@ export class GoogleAIKeyChecker extends KeyCheckerBase<GoogleAIKey> {
     return familiesArray;
   }
 
+  private async testGenerateContent(key: GoogleAIKey) {
+    const payload = {
+      contents: [{ parts: { text: "hello" }, role: "user" }],
+      tools: [],
+      safetySettings: [],
+      generationConfig: { maxOutputTokens: 1 },
+    };
+    await axios.post(
+      GENERATE_CONTENT_URL.replace("%KEY%", key.key),
+      payload,
+      { validateStatus: (status) => status === 200 }
+    );
+  }
+
   protected handleAxiosError(key: GoogleAIKey, error: AxiosError): void {
     if (error.response && GoogleAIKeyChecker.errorIsGoogleAIError(error)) {
       const httpStatus = error.response.status;
       const { code, message, status, details } = error.response.data.error;
 
       switch (httpStatus) {
-        case 400:
-          const reason = details?.[0]?.reason;
-          if (status === "INVALID_ARGUMENT" && reason === "API_KEY_INVALID") {
+        case 400: {
+          const keyDeadMsgs = [
+            /please enable billing/i,
+            /API key not valid/i,
+            /API key expired/i,
+            /pass a valid API/i,
+          ];
+          const text = JSON.stringify(error.response.data.error);
+          if (text.match(keyDeadMsgs.join("|"))) {
             this.log.warn(
-              { key: key.hash, reason, details },
-              "Key check returned API_KEY_INVALID error. Disabling key."
-            );
-            this.updateKey(key.hash, { isDisabled: true, isRevoked: true });
-            return;
-          } else if (
-            status === "FAILED_PRECONDITION" &&
-            message.match(/please enable billing/i)
-          ) {
-            this.log.warn(
-              { key: key.hash, message, details },
-              "Key check returned billing disabled error. Disabling key."
+              { key: key.hash, error: text },
+              "Key check returned a non-transient 400 error. Disabling key."
             );
             this.updateKey(key.hash, { isDisabled: true, isRevoked: true });
             return;
           }
           break;
+        }
         case 401:
         case 403:
           this.log.warn(
@@ -113,14 +126,30 @@ export class GoogleAIKeyChecker extends KeyCheckerBase<GoogleAIKey> {
           );
           this.updateKey(key.hash, { isDisabled: true, isRevoked: true });
           return;
-        case 429:
+        case 429: {
+          const text = JSON.stringify(error.response.data.error);
+
+          const keyDeadMsgs = [
+            /GenerateContentRequestsPerMinutePerProjectPerRegion/i,
+            /"quota_limit_value":"0"/i,
+          ];
+          if (text.match(keyDeadMsgs.join("|"))) {
+            this.log.warn(
+              { key: key.hash, error: text },
+              "Key check returned a non-transient 429 error. Disabling key."
+            );
+            this.updateKey(key.hash, { isDisabled: true, isRevoked: true });
+            return;
+          }
+
           this.log.warn(
             { key: key.hash, status, code, message, details },
             "Key is rate limited. Rechecking key in 1 minute."
           );
-          const next = Date.now() - (KEY_CHECK_PERIOD - 10 * 1000);
+          const next = Date.now() - (KEY_CHECK_PERIOD - 60 * 1000);
           this.updateKey(key.hash, { lastChecked: next });
           return;
+        }
       }
 
       this.log.error(

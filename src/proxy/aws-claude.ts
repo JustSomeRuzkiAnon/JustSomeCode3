@@ -80,7 +80,7 @@ const awsClaudeProxy = createQueuedProxyMiddleware({
     if (!signedRequest) throw new Error("Must sign request before proxying");
     return `${signedRequest.protocol}//${signedRequest.hostname}`;
   },
-  mutations: [signAwsRequest,finalizeSignedRequest],
+  mutations: [signAwsRequest, finalizeSignedRequest],
   blockingResponseHandler: awsBlockingResponseHandler,
 });
 
@@ -177,19 +177,17 @@ function maybeReassignModel(req: Request) {
   // Anthropic model names can look like:
   // - claude-v1
   // - claude-2.1
-  // - claude-3-5-sonnet-20240620-v1:0
+  // - claude-3-5-sonnet-20240620
+  // - claude-3-opus-latest
   const pattern =
-    /^(claude-)?(instant-)?(v)?(\d+)([.-](\d))?(-\d+k)?(-sonnet-|-opus-|-haiku-)?(\d*)/i;
+    /^(claude-)?(instant-)?(v)?(\d+)([.-](\d))?(-\d+k)?(-sonnet-|-opus-|-haiku-)?(latest|\d*)/i;
   const match = model.match(pattern);
 
-  // If there's no match, fallback to Claude v2 as it is most likely to be
-  // available on AWS.
   if (!match) {
-    req.body.model = `anthropic.claude-v2:1`;
-    return;
+    throw new Error(`Provided model name (${model}) doesn't resemble a Claude model ID.`);
   }
 
-  const [_, _cl, instant, _v, major, _sep, minor, _ctx, name, _rev] = match;
+  const [_, _cl, instant, _v, major, _sep, minor, _ctx, rawName, rev] = match;
 
   if (instant) {
     req.body.model = "anthropic.claude-instant-v1";
@@ -197,6 +195,8 @@ function maybeReassignModel(req: Request) {
   }
 
   const ver = minor ? `${major}.${minor}` : major;
+  const name = rawName?.match(/([a-z]+)/)?.[1] || "";
+
   switch (ver) {
     case "1":
     case "1.0":
@@ -206,24 +206,52 @@ function maybeReassignModel(req: Request) {
     case "2.0":
       req.body.model = "anthropic.claude-v2";
       return;
+    case "2.1":
+      req.body.model = "anthropic.claude-v2:1";
+      return;
     case "3":
     case "3.0":
-      if (name.includes("opus")) {
-        req.body.model = "anthropic.claude-3-opus-20240229-v1:0";
-      } else if (name.includes("haiku")) {
-        req.body.model = "anthropic.claude-3-haiku-20240307-v1:0";
-      } else {
-        req.body.model = "anthropic.claude-3-sonnet-20240229-v1:0";
+      // there is only one snapshot for all Claude 3 models so there is no need
+      // to check the revision
+      switch (name) {
+        case "sonnet":
+          req.body.model = "anthropic.claude-3-sonnet-20240229-v1:0";
+          return;
+        case "haiku":
+          req.body.model = "anthropic.claude-3-haiku-20240307-v1:0";
+          return;
+        case "opus":
+          req.body.model = "anthropic.claude-3-opus-20240229-v1:0";
+          return;
       }
-      return;
+      break;
     case "3.5":
-      req.body.model = "anthropic.claude-3-5-sonnet-20240620-v1:0";
-      return;
+      switch (name) {
+        case "sonnet":
+          switch (rev) {
+            case "20241022":
+            case "latest":
+              req.body.model = "anthropic.claude-3-5-sonnet-20241022-v2:0";
+              return;
+            case "20240620":
+              req.body.model = "anthropic.claude-3-5-sonnet-20240620-v1:0";
+              return;
+          }
+          break;
+        case "haiku":
+          switch (rev) {
+            case "20241022":
+            case "latest":
+              req.body.model = "anthropic.claude-3-5-haiku-20241022-v1:0";
+              return;
+          }
+        case "opus":
+          // Add after model id is announced never
+          break;
+      }
   }
 
-  // Fallback to Claude 2.1
-  req.body.model = `anthropic.claude-v2:1`;
-  return;
+  throw new Error(`Provided model name (${model}) could not be mapped to a known AWS Claude model ID.`);
 }
 
 export const awsClaude = awsClaudeRouter;
