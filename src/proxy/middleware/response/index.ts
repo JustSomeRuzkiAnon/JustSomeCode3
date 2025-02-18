@@ -246,6 +246,9 @@ const handleUpstreamErrors: ProxyResHandlerWithBody = async (
           errorPayload.proxy_note = `The upstream API rejected the request. Check the error message for details.`;
         }
         break;
+      case "deepseek":
+        await handleDeepseekBadRequestError(req, errorPayload);
+        break;
       case "anthropic":
       case "aws":
       case "gcp":
@@ -261,6 +264,12 @@ const handleUpstreamErrors: ProxyResHandlerWithBody = async (
     // Key is invalid or was revoked
     keyPool.disable(req.key!, "revoked");
     errorPayload.proxy_note = `Assigned API key is invalid or revoked, please try again.`;
+  } else if (statusCode === 402) {
+    // Deepseek specific - insufficient balance
+    if (service === "deepseek") {
+      keyPool.disable(req.key!, "quota");
+      errorPayload.proxy_note = `Assigned key has insufficient balance. Please try again.`;
+    }
   } else if (statusCode === 403) {
     switch (service) {
       case "anthropic":
@@ -328,6 +337,9 @@ const handleUpstreamErrors: ProxyResHandlerWithBody = async (
       case "google-ai":
         await handleGoogleAIRateLimitError(req, errorPayload);
         break;
+      case "deepseek":
+        await handleDeepseekRateLimitError(req, errorPayload);
+        break;
       default:
         assertNever(service);
     }
@@ -351,6 +363,7 @@ const handleUpstreamErrors: ProxyResHandlerWithBody = async (
       case "aws":
       case "gcp":
       case "azure":
+      case "deepseek":
         errorPayload.proxy_note = `The key assigned to your prompt does not support the requested model.`;
         break;
       default:
@@ -482,6 +495,23 @@ async function handleGcpRateLimitError(
   } else {
     errorPayload.proxy_note = `Unrecognized 429 Too Many Requests error from GCP.`;
   }
+}
+
+async function handleDeepseekRateLimitError(
+  req: Request,
+  errorPayload: ProxiedErrorPayload
+) {
+  keyPool.markRateLimited(req.key!);
+  await reenqueueRequest(req);
+  throw new RetryableError("Deepseek rate-limited request re-enqueued.");
+}
+
+async function handleDeepseekBadRequestError(
+  req: Request, 
+  errorPayload: ProxiedErrorPayload
+) {
+  // Based on the checker code, a 400 response means the key is valid but there was some other error
+  errorPayload.proxy_note = `The API rejected the request. Check the error message for details.`;
 }
 
 async function handleOpenAIRateLimitError(
@@ -681,8 +711,8 @@ const countResponseTokens: ProxyResHandlerWithBody = async (
     const service = req.outboundApi;
     const completion = getCompletionFromBody(req, body);
     const tokens = await countTokens({ req, completion, service });
-
-    if (req.service === "openai" || req.service === "azure") {
+    
+    if (req.service === "openai" || req.service === "azure" || req.service === "deepseek") {
       // O1 consumes (a significant amount of) invisible tokens for the chain-
       // of-thought reasoning. We have no way to count these other than to check
       // the response body.
@@ -723,6 +753,8 @@ const omittedHeaders = new Set<string>([
   "set-cookie",
   "openai-organization",
   "x-request-id",
+  "x-ds-request-id",
+  "x-ds-trace-id",
   "cf-ray",
 ]);
 const copyHttpHeaders: ProxyResHandlerWithBody = async (
@@ -730,6 +762,9 @@ const copyHttpHeaders: ProxyResHandlerWithBody = async (
   _req,
   res
 ) => {
+  // Hack: we don't copy headers since with chunked transfer we've already sent them.
+  if (_req.isChunkedTransfer) return;
+
   Object.keys(proxyRes.headers).forEach((key) => {
     if (omittedHeaders.has(key)) return;
     res.setHeader(key, proxyRes.headers[key] as string);

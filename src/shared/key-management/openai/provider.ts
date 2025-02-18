@@ -114,6 +114,7 @@ export class OpenAIKeyProvider implements KeyProvider<OpenAIKey> {
         gpt4oTokens: 0,
         "o1Tokens": 0,
         "o1-miniTokens": 0,
+        "o3-miniTokens": 0,
         "dall-eTokens": 0,
         modelIds: [],
       };

@@ -75,6 +75,7 @@ export class AzureOpenAIKeyProvider implements KeyProvider<AzureOpenAIKey> {
         "azure-gpt4oTokens": 0,
         "azure-o1Tokens": 0,
         "azure-o1-miniTokens": 0,
+        "azure-o3-miniTokens": 0,
         "azure-dall-eTokens": 0,
         modelIds: [],
       };

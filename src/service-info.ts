@@ -2,6 +2,7 @@ import { config, listConfig } from "./config";
 import {
   AnthropicKey,
   AwsBedrockKey,
+  DeepseekKey,
   GcpKey,
   keyPool,
   OpenAIKey,
@@ -19,6 +20,7 @@ import {
   MODEL_FAMILY_SERVICE,
   ModelFamily,
   OpenAIModelFamily,
+  DeepseekModelFamily,
 } from "./shared/models";
 import { getCostSuffix, getTokenCostUsd, prettyTokens } from "./shared/stats";
 import { getUniqueIps } from "./proxy/rate-limit";
@@ -34,6 +36,8 @@ const keyIsAnthropicKey = (k: KeyPoolKey): k is AnthropicKey =>
   k.service === "anthropic";
 const keyIsAwsKey = (k: KeyPoolKey): k is AwsBedrockKey => k.service === "aws";
 const keyIsGcpKey = (k: KeyPoolKey): k is GcpKey => k.service === "gcp";
+const keyIsDeepseekKey = (k: KeyPoolKey): k is DeepseekKey =>
+  k.service === "deepseek";
 
 /** Stats aggregated across all keys for a given service. */
 type ServiceAggregate = "keys" | "uncheckedKeys" | "orgs";
@@ -96,6 +100,7 @@ export type ServiceInfo = {
   uptime: number;
   endpoints: {
     openai?: string;
+    deepseek?: string;
     anthropic?: string;
     "google-ai"?: string;
     "mistral-ai"?: string;
@@ -117,7 +122,8 @@ export type ServiceInfo = {
   & { [f in GcpModelFamily]?: GcpInfo }
   & { [f in AzureOpenAIModelFamily]?: BaseFamilyInfo; }
   & { [f in GoogleAIModelFamily]?: BaseFamilyInfo }
-  & { [f in MistralAIModelFamily]?: BaseFamilyInfo };
+  & { [f in MistralAIModelFamily]?: BaseFamilyInfo }
+  & { [f in DeepseekModelFamily]?: BaseFamilyInfo };
 
 // https://stackoverflow.com/a/66661477
 // type DeepKeyOf<T> = (
@@ -158,6 +164,9 @@ const SERVICE_ENDPOINTS: { [s in LLMService]: Record<string, string> } = {
   azure: {
     azure: `%BASE%/azure/openai`,
     "azure-image": `%BASE%/azure/openai`,
+  },
+  deepseek: {
+    deepseek: `%BASE%/deepseek`,
   },
 };
 
@@ -309,6 +318,7 @@ function addKeyToAggregates(k: KeyPoolKey) {
   addToService("aws__keys", k.service === "aws" ? 1 : 0);
   addToService("gcp__keys", k.service === "gcp" ? 1 : 0);
   addToService("azure__keys", k.service === "azure" ? 1 : 0);
+  addToService("deepseek__keys", k.service === "deepseek" ? 1 : 0);
 
   let sumTokens = 0;
   let sumCost = 0;
@@ -371,6 +381,13 @@ function addKeyToAggregates(k: KeyPoolKey) {
       if (!keyIsGcpKey(k)) throw new Error("Invalid key type");
       k.modelFamilies.forEach(incrementGenericFamilyStats);
       // TODO: add modelIds to GcpKey
+      break;
+    case "deepseek":
+      if (!keyIsDeepseekKey(k)) throw new Error("Invalid key type");
+      k.modelFamilies.forEach((f) => {
+        incrementGenericFamilyStats(f);
+        addToFamily(`${f}__overQuota`, k.isOverQuota ? 1 : 0);
+      });
       break;
     // These services don't have any additional stats to track.
     case "azure":
@@ -444,6 +461,8 @@ function getInfoForFamily(family: ModelFamily): BaseFamilyInfo {
           info.enabledVariants = "not implemented";
         }
         break;
+      case "deepseek":
+        info.overQuotaKeys = familyStats.get(`${family}__overQuota`) || 0;
     }
   }
 

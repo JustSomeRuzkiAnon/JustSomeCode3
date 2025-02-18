@@ -11,7 +11,7 @@ const KEY_CHECK_PERIOD = 6 * 60 * 60 * 1000; // 3 hours
 const LIST_MODELS_URL =
   "https://generativelanguage.googleapis.com/v1beta/models";
 const GENERATE_CONTENT_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=%KEY%";
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=%KEY%";
 
 type ListModelsResponse = {
   models: {
@@ -133,7 +133,7 @@ export class GoogleAIKeyChecker extends KeyCheckerBase<GoogleAIKey> {
             /GenerateContentRequestsPerMinutePerProjectPerRegion/i,
             /"quota_limit_value":"0"/i,
           ];
-          if (text.match(keyDeadMsgs.join("|"))) {
+          if (keyDeadMsgs.some(r => r.test(text))) {
             this.log.warn(
               { key: key.hash, error: text },
               "Key check returned a non-transient 429 error. Disabling key."

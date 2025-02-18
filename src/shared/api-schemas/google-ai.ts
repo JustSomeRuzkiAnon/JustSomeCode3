@@ -5,18 +5,27 @@ import {
 } from "./openai";
 import { APIFormatTransformer } from "./index";
 
+const TextPartSchema = z.object({ 
+  text: z.string(),
+  thought: z.boolean().optional()
+});
+
+const InlineDataPartSchema = z.object({
+  inlineData: z.object({
+    mimeType: z.string(),
+    data: z.string(),
+  }),
+});
+
+const PartSchema = z.union([TextPartSchema, InlineDataPartSchema]);
+
 const GoogleAIV1ContentSchema = z.object({
   parts: z
-    .union([
-      z.array(z.object({ text: z.string() })),
-      z.object({ text: z.string() }),
-    ])
-    // Google allows parts to be an array or a single object, which is really
-    // annoying for downstream code. We will coerce it to an array here.
+    .union([PartSchema, z.array(PartSchema)])
     .transform((val) => (Array.isArray(val) ? val : [val])),
-  // TODO: add other media types
   role: z.enum(["user", "model"]).optional(),
 });
+
 
 const SafetySettingsSchema = z
   .array(
@@ -66,6 +75,7 @@ export const GoogleAIV1GenerateContentSchema = z
         topP: z.number().min(0).max(1).optional(),
         topK: z.number().min(1).max(40).optional(),
         stopSequences: z.array(z.string().max(500)).max(5).optional(),
+        thinkingConfig: z.object({includeThoughts: z.boolean().optional()}).optional()
       })
       .default({}),
   })
@@ -123,7 +133,7 @@ export const transformOpenAIToGoogleAI: APIFormatTransformer<
     })
     .reduce<GoogleAIChatMessage[]>((acc, msg) => {
       const last = acc[acc.length - 1];
-      if (last?.role === msg.role) {
+      if (last?.role === msg.role && 'text' in last.parts[0] && 'text' in msg.parts[0]) {
         last.parts[0].text += "\n\n" + msg.parts[0].text;
       } else {
         acc.push(msg);
@@ -160,3 +170,10 @@ export const transformOpenAIToGoogleAI: APIFormatTransformer<
     ],
   };
 };
+
+export function containsImageContent(contents: GoogleAIChatMessage[]): boolean {
+  return contents.some(content => {
+    const parts = Array.isArray(content.parts) ? content.parts : [content.parts];
+    return parts.some(part => 'inlineData' in part);
+  });
+}

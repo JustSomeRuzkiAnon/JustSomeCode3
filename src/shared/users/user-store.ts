@@ -422,6 +422,7 @@ function getModelFamilyForQuotaUsage(
   if (model.includes("anthropic.")) return getAwsBedrockModelFamily(model);
   if (model.startsWith("claude-") && model.includes("@"))
     return getGcpModelFamily(model);
+  if (model.startsWith("deepseek")) return "deepseek";
 
   switch (api) {
     case "openai":

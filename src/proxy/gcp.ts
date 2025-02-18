@@ -129,68 +129,72 @@ gcpRouter.post(
  */
 function maybeReassignModel(req: Request) {
   const model = req.body.model;
+  const DEFAULT_MODEL = "claude-3-5-sonnet-v2@20241022";
 
   // If it looks like an GCP model, use it as-is
-  // if (model.includes("anthropic.claude")) {
   if (model.startsWith("claude-") && model.includes("@")) {
     return;
   }
 
   // Anthropic model names can look like:
-  // - claude-v1
-  // - claude-2.1
-  // - claude-3-5-sonnet-20240620-v1:0
-  const pattern =
-    /^(claude-)?(instant-)?(v)?(\d+)([.-](\d{1}))?(-\d+k)?(-sonnet-|-opus-|-haiku-)?(\d*)/i;
+  // - claude-3-sonnet
+  // - claude-3.5-sonnet
+  // - claude-3-5-haiku
+  // - claude-3-5-haiku-latest
+  // - claude-3-5-sonnet-20240620
+  const pattern = /^claude-(\d+)[.-]?(\d)?-(sonnet|opus|haiku)(?:-(latest|\d+))?/i;
   const match = model.match(pattern);
-
-  // If there's no match, fallback to Claude3 Sonnet as it is most likely to be
-  // available on GCP.
   if (!match) {
-    req.body.model = `claude-3-sonnet@${LATEST_GCP_SONNET_MINOR_VERSION}`;
+    req.body.model = DEFAULT_MODEL;
     return;
   }
 
-  const [_, _cl, instant, _v, major, _sep, minor, _ctx, name, rev] = match;
-
-  // TODO: rework this to function similarly to aws-claude.ts maybeReassignModel
+  const [_, major, minor, flavor, rev] = match;
   const ver = minor ? `${major}.${minor}` : major;
+
   switch (ver) {
     case "3":
     case "3.0":
-      if (name.includes("opus")) {
-        req.body.model = "claude-3-opus@20240229";
-      } else if (name.includes("haiku")) {
-        req.body.model = "claude-3-haiku@20240307";
-      } else {
-        req.body.model = "claude-3-sonnet@20240229";
+      switch (flavor) {
+        case "haiku":
+          req.body.model = "claude-3-haiku@20240307";
+          break;
+        case "opus":
+          req.body.model = "claude-3-opus@20240229";
+          break;
+        case "sonnet":
+          req.body.model = "claude-3-sonnet@20240229";
+          break;
+        default:
+          req.body.model = "claude-3-sonnet@20240229";
       }
       return;
+
     case "3.5":
-      switch (name) {
-        case "sonnet":
-          switch (rev) {
-            case "20241022":
-            case "latest":
-              req.body.model = "claude-3-5-sonnet-v2@20241022";
-              return;
-            case "20240620":
-              req.body.model = "claude-3-5-sonnet@20240620";
-              return;
-          }
-          break;
+      switch (flavor) {
         case "haiku":
           req.body.model = "claude-3-5-haiku@20241022";
           return;
         case "opus":
-          // Add after model ids are announced late 2024
-          break;
+          // no 3.5 opus yet
+          req.body.model = DEFAULT_MODEL;
+          return;
+        case "sonnet":
+          if (rev === "20240620") {
+            req.body.model = "claude-3-5-sonnet@20240620";
+          } else {
+            // includes -latest, edit if anthropic actually releases 3.5 sonnet v3
+            req.body.model = DEFAULT_MODEL;
+          }
+          return;
+        default:
+          req.body.model = DEFAULT_MODEL;
       }
-  }
+      return;
 
-  // Fallback to Claude3 Sonnet
-  req.body.model = `claude-3-sonnet@${LATEST_GCP_SONNET_MINOR_VERSION}`;
-  return;
+    default:
+      req.body.model = DEFAULT_MODEL;
+  }
 }
 
 export const gcp = gcpRouter;

@@ -38,7 +38,7 @@ export function generateModelList(service: "openai" | "azure") {
       .flatMap((k) => k.modelIds)
       .filter((id) => {
         const allowed = modelFamilies.has(getOpenAIModelFamily(id));
-        const known = ["gpt", "o1", "dall-e", "chatgpt", "text-embedding"].some(
+        const known = ["gpt", "o", "dall-e", "chatgpt", "text-embedding"].some(
           (prefix) => id.startsWith(prefix)
         );
         const isFinetune = id.includes("ft");
@@ -109,6 +109,14 @@ const openaiResponseHandler: ProxyResHandlerWithBody = async (
     throw new Error("Expected body to be an object");
   }
 
+  const interval = (req as any)._keepAliveInterval
+  if (interval) {
+    clearInterval(interval);
+    res.write(JSON.stringify(body));
+    res.end();
+    return;
+  }
+
   let newBody = body;
   if (req.outboundApi === "openai-text" && req.inboundApi === "openai") {
     req.log.info("Transforming Turbo-Instruct response to Chat format");
@@ -172,14 +180,37 @@ openaiRouter.post(
   ),
   openaiProxy
 );
+
+const setupChunkedTransfer: RequestHandler = (req, res, next) => {
+  req.log.info("Setting chunked transfer for o1 to prevent Cloudflare timeouts")
+  // Only o1 doesn't support streaming
+  if (req.body.model === "o1" || req.body.model === "o1-2024-12-17") {
+    req.isChunkedTransfer = true;
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Transfer-Encoding': 'chunked'
+    });
+    
+    // Higher values are required - otherwise Cloudflare will buffer and not pass
+    // the separate chunks, which means that a >100s response will get terminated anyway
+    const keepAlive = setInterval(() => {
+      res.write(' '.repeat(4096));
+    }, 48_000);
+    
+    (req as any)._keepAliveInterval = keepAlive;
+  }
+  next();
+};
+
 // General chat completion endpoint. Turbo-instruct is not supported here.
 openaiRouter.post(
   "/v1/chat/completions",
   ipLimiter,
   createPreprocessorMiddleware(
     { inApi: "openai", outApi: "openai", service: "openai" },
-    { afterTransform: [fixupMaxTokens] }
+    { afterTransform: [fixupMaxTokens, setO1ReasoningEffort] }
   ),
+  setupChunkedTransfer,
   openaiProxy
 );
 // Embeddings endpoint.
@@ -200,5 +231,23 @@ function fixupMaxTokens(req: Request) {
   }
   delete req.body.max_tokens;
 }
+
+// Models that support 'reasoning_effort'
+// When o1-preview and o1-mini are dead, we can just match all o* models 
+function isO1Model(model: string): boolean {
+  return ['o1', 'o1-2024-12-17', 'o3-mini', 'o3-mini-2025-01-31'].includes(model);
+}
+
+// most frontends don't currently support custom reasoning effort for o1
+// so we do this to overwrite the default (medium)
+function setO1ReasoningEffort(req: Request) {
+  const effort = process.env.O1_REASONING_EFFORT?.toLowerCase();
+  if (!effort || !isO1Model(req.body.model) || req.body.reasoning_effort) return;
+  
+  if (['low', 'medium', 'high'].includes(effort)) {
+    req.body.reasoning_effort = effort;
+  }
+}
+
 
 export const openai = openaiRouter;

@@ -30,6 +30,7 @@ export const transformOutboundPayload: RequestPreprocessor = async (req) => {
   }
 
   applyMistralPromptFixes(req);
+  applyGoogleAIKeyTransforms(req);
 
   // Native prompts are those which were already provided by the client in the
   // target API format. We don't need to transform them.
@@ -84,6 +85,46 @@ function applyMistralPromptFixes(req: Request): void {
       req.log.info(
         "Native Mistral chat prompt relies on assistant message prefix. Converting to text completions request."
       );
+    }
+  }
+}
+
+function toCamelCase(str: string): string {
+  return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+}
+
+function transformKeysToCamelCase(obj: any, hasTransformed = { value: false }): any {
+  if (Array.isArray(obj)) {
+    return obj.map(item => transformKeysToCamelCase(item, hasTransformed));
+  }
+  
+  if (obj !== null && typeof obj === 'object') {
+    return Object.fromEntries(
+      Object.entries(obj).map(([key, value]) => {
+        const camelKey = toCamelCase(key);
+        if (camelKey !== key) {
+          hasTransformed.value = true;
+        }
+        return [
+          camelKey,
+          transformKeysToCamelCase(value, hasTransformed)
+        ];
+      })
+    );
+  }
+  
+  return obj;
+}
+
+function applyGoogleAIKeyTransforms(req: Request): void {
+  // Google (Gemini) API in their infinite wisdom accepts both snake_case and camelCase
+  // for some params even though in the docs they use snake_case.
+  // Some frontends (e.g. ST) use snake_case and camelCase so we normalize all keys to camelCase
+  if (req.outboundApi === "google-ai") {
+    const hasTransformed = { value: false };
+    req.body = transformKeysToCamelCase(req.body, hasTransformed);
+    if (hasTransformed.value) {
+      req.log.info("Applied Gemini camelCase -> snake_case transform");
     }
   }
 }

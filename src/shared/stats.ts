@@ -24,7 +24,9 @@ export function getTokenCostUsd(model: ModelFamily, tokens: number) {
       break
     case "azure-o1-mini":
     case "o1-mini":
-      cost = 0.000005; // $3/1M input tokens, $12/1M output tokens
+    case "azure-o3-mini":
+    case "o3-mini":
+      cost = 0.0000025; // $1.1/1M input tokens, $4.4/1M output tokens
       break
     case "azure-gpt4-32k":
     case "gpt4-32k":
